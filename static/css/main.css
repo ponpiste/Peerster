@@ -1,0 +1,10 @@
+.nav{
+    max-height: 450px;
+    overflow-y:scroll;
+}
+.nav-node{
+    max-height: 150px;
+    overflow-y:scroll;
+}
+
+.top-buffer { margin-top:40px; }
