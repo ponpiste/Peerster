@@ -19,7 +19,7 @@ import (
 const defaultGossipAddr = "127.0.0.1:33000" // IP address:port number for gossiping
 const defaultName = "peerXYZ"               // Give a unique default name
 
-func main() {
+func main() { 
 
 	UIPort := flag.String("UIPort", client.DefaultUIPort, "port for gossip communication with peers")
 	gossipAddr := flag.String("gossipAddr", defaultGossipAddr, "ip:port for gossip communication with peers")
