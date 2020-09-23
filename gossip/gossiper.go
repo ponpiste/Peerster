@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"net"
 	"fmt"
+	"sync"
 	"time"
 	"encoding/json"
 )
@@ -38,7 +39,8 @@ type Gossiper struct {
 	udpAddr *net.UDPAddr
 	callback NewMessageCallback
 	peers []string
-	ch chan int
+
+	peers_mux sync.Mutex
 }
 
 // NewGossiper returns a Gossiper that is able to listen to the given address
@@ -92,8 +94,6 @@ func (g *Gossiper) Run(ready chan struct{}) {
 
 		if string(b[:n]) == stopMsg {
 			g.conn.Close()
-			g.ch <- 1
-			fmt.Println("stop received")
 			break
 		}
 
@@ -123,6 +123,9 @@ func (g *Gossiper) Stop() {
 }
 
 func (g *Gossiper) broadcast(b []byte, blacklist string) {
+
+	g.peers_mux.Lock()
+	defer g.peers_mux.Unlock()
 
 	for _, peer := range g.peers {
 
@@ -155,12 +158,15 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 		panic(fmt.Sprintf("Error marshalling the json: %v", err))
 	}
 
-	g.broadcast(b, "")
+	go g.broadcast(b, "")
 }
 
 // AddAddresses implements gossip.BaseGossiper. It takes any number of node
 // addresses that the gossiper can contact in the gossiping network.
 func (g *Gossiper) AddAddresses(addresses ...string) error {
+
+	g.peers_mux.Lock()
+	defer g.peers_mux.Unlock()
 
 	for _, addr := range addresses {
 
@@ -182,6 +188,9 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 // GetNodes implements gossip.BaseGossiper. It returns the list of nodes this
 // gossiper knows currently in the network.
 func (g *Gossiper) GetNodes() []string {
+
+	g.peers_mux.Lock()
+	defer g.peers_mux.Unlock()
 	
 	return g.peers
 }

@@ -27,8 +27,8 @@ func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 		return err
 	}
 
-	g.broadcast(b, msg.RelayPeerAddr)
 	g.AddAddresses(msg.RelayPeerAddr)
-
+	go g.broadcast(b, msg.RelayPeerAddr)
+	
 	return nil
 }
