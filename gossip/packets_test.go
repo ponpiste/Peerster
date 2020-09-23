@@ -40,7 +40,6 @@ func TestGossip_Init(t *testing.T) {
 }
 
 func TestGossip_Chain(t *testing.T) {
-	return
 	// We test the sending of a message in a "chain" fashion, like the
 	// following:
 	//

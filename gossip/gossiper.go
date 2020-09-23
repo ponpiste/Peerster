@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"net"
 	"fmt"
+	"time"
 	"encoding/json"
 )
 
@@ -37,6 +38,7 @@ type Gossiper struct {
 	udpAddr *net.UDPAddr
 	callback NewMessageCallback
 	peers []string
+	ch chan int
 }
 
 // NewGossiper returns a Gossiper that is able to listen to the given address
@@ -88,14 +90,10 @@ func (g *Gossiper) Run(ready chan struct{}) {
 			panic(fmt.Sprintf("Could not read from UDP addr: %v", err))
 		}
 
-		fmt.Println()
-		fmt.Println("Received: ")
-		for _, x := range b[:n] {
-			fmt.Printf(" %v",x)
-		}
-
 		if string(b[:n]) == stopMsg {
 			g.conn.Close()
+			g.ch <- 1
+			fmt.Println("stop received")
 			break
 		}
 
@@ -114,23 +112,21 @@ func (g *Gossiper) Run(ready chan struct{}) {
 // be sure that you stopped listening before closing the connection. For that
 // you can send a stop message to the listener, which then knows that it can
 // stop listening.
-func (g *Gossiper) Stop() {
+func (g *Gossiper) Stop() { 
 	
 	_, err := g.conn.WriteToUDP([]byte(stopMsg), g.udpAddr)
 	if err != nil {
 		panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
 	}
+	// Todo trouver mieux
+	time.Sleep(time.Millisecond * 300)
 }
 
-func (g *Gossiper) broadcast(b []byte) {
-
-	fmt.Println()
-	fmt.Println("Sent: ")
-	for _, x := range b {
-		fmt.Printf(" %v",x)
-	}
+func (g *Gossiper) broadcast(b []byte, blacklist string) {
 
 	for _, peer := range g.peers {
+
+		if peer == blacklist {continue}
 
 		addr, err := net.ResolveUDPAddr("udp4", peer)
 		if err != nil {
@@ -159,14 +155,27 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 		panic(fmt.Sprintf("Error marshalling the json: %v", err))
 	}
 
-	g.broadcast(b)
+	g.broadcast(b, "")
 }
 
 // AddAddresses implements gossip.BaseGossiper. It takes any number of node
 // addresses that the gossiper can contact in the gossiping network.
 func (g *Gossiper) AddAddresses(addresses ...string) error {
-	
-	g.peers = append(g.peers, addresses...)
+
+	for _, addr := range addresses {
+
+		found := false
+		for _, peer := range g.peers {
+			if peer == addr {
+				found = true
+			}
+		}
+
+		if !found {
+			g.peers = append(g.peers, addr)
+		}
+	}
+
 	return nil
 }
 
