@@ -162,6 +162,19 @@ func (g *Gossiper) broadcast(b []byte, blacklist string) {
 // spread through the gossip network with the identifier of g.
 func (g *Gossiper) AddSimpleMessage(text string) {
 
+	fmt.Printf("CLIENT MESSAGE %v\n", text)
+	g.peers_mux.Lock()
+	fmt.Printf("PEERS ")
+	for i, peer := range g.peers {
+		if i==0 {
+			fmt.Printf("%v",peer)
+		} else {
+			fmt.Printf(",%v",peer)
+		}
+	}
+	g.peers_mux.Unlock()
+	fmt.Println()
+
 	var msg = SimpleMessage {
 		OriginPeerName: g.identifier,
 		RelayPeerAddr: g.address,

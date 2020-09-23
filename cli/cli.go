@@ -4,11 +4,12 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
-
+	"net/http"
+	"encoding/json"
 	"go.dedis.ch/cs438/peerster/hw0/client"
-
 	"go.dedis.ch/onet/v3/log"
 )
 
@@ -27,5 +28,16 @@ func main() {
 // sendMsg protobuf encodes the packet and sends it as an UDP datagram
 // to the given address.
 func sendMsg(address string, p *client.ClientMessage) {
-	log.Error("Implment me")
+
+	b, err := json.Marshal(p)
+	if err != nil {
+		log.Fatal("failed to dial", err)
+	    return
+	}
+
+	_, err = http.Post(address + "/message", "application/json", bytes.NewBuffer(b))
+	if err != nil {
+		log.Fatal("failed to send http post", err)
+	    return
+	}
 }

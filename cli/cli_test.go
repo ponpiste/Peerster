@@ -28,6 +28,7 @@ func TestCli(t *testing.T) {
 	r.Methods("POST").Path("/message").HandlerFunc(PostMessageHandler(&received))
 	go http.ListenAndServe("127.0.0.1:2001", r)
 
+	time.Sleep(time.Millisecond * 300)
 	sendMsg("http://127.0.0.1:2001", &msg)
 	time.Sleep(time.Millisecond * 300)
 
