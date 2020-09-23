@@ -206,8 +206,9 @@ func (g *Gossiper) GetNodes() []string {
 
 	g.peers_mux.Lock()
 	defer g.peers_mux.Unlock()
-	
-	return g.peers
+
+	cpy := append([]string{}, g.peers...)
+	return cpy
 }
 
 // SetIdentifier implements gossip.BaseGossiper. It changes the identifier sent
