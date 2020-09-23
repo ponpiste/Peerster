@@ -34,6 +34,8 @@ type Gossiper struct {
 	identifier string
 	conn *net.UDPConn
 	udpAddr *net.UDPAddr
+	callback NewMessageCallback
+	peers []string
 }
 
 // NewGossiper returns a Gossiper that is able to listen to the given address
@@ -43,9 +45,12 @@ type Gossiper struct {
 func NewGossiper(address, identifier string) (BaseGossiper, error) {
 
 	g := Gossiper{
-		Handlers: make(map[reflect.Type]interface{}),
+		Handlers: map[reflect.Type]interface{} {
+			reflect.TypeOf(SimpleMessage {}): SimpleMessage {},
+		},
 		address: address,
 		identifier: identifier,
+		peers: make([]string, 0),
 	}
 
 	err := g.RegisterHandler(&SimpleMessage{})
@@ -78,12 +83,18 @@ func (g *Gossiper) Run(ready chan struct{}) {
 	buffer := make([]byte, 1024)
 	for {
 
-		n, client_addr, err := g.conn.ReadFromUDP(buffer)
+		_, client_addr, err := g.conn.ReadFromUDP(buffer)
 		if err != nil {
 			panic(fmt.Sprintf("Could not read from UDP addr: %v", err))
 		}
 
-		fmt.Println("Received UDP packet: %v from %v", string(buffer[0:n-1]), client_addr)
+		// Todo: turn into JSON into SimpleMessage
+		var msg SimpleMessage
+		packet := GossipPacket {&msg}
+
+		// Todo
+		g.callback(client_addr.String(), packet)
+		msg.Exec(g, client_addr)
 	}
 }
 
@@ -103,38 +114,57 @@ func (g *Gossiper) Stop() {
 // AddSimpleMessage implements gossip.BaseGossiper. It takes a text that will be
 // spread through the gossip network with the identifier of g.
 func (g *Gossiper) AddSimpleMessage(text string) {
-	log.Error("Implement me")
+
+	for _, peer := range g.peers {
+
+		addr, err := net.ResolveUDPAddr("udp4", peer)
+		if err != nil {
+			panic(fmt.Sprintf("Could not resolve UDP addr: %v", err))
+		}
+
+		conn, err := net.DialUDP("udp4", nil, addr)
+		if err != nil {
+			panic(fmt.Sprintf("Could not dial UDP addr: %v", err))
+		}
+
+		_, err = conn.Write([]byte(text))
+		if err != nil {
+			panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
+		}
+
+		conn.Close()
+	}
 }
 
 // AddAddresses implements gossip.BaseGossiper. It takes any number of node
 // addresses that the gossiper can contact in the gossiping network.
 func (g *Gossiper) AddAddresses(addresses ...string) error {
-	log.Error("Implement me")
+	
+	g.peers = append(g.peers, addresses...)
 	return nil
 }
 
 // GetNodes implements gossip.BaseGossiper. It returns the list of nodes this
 // gossiper knows currently in the network.
 func (g *Gossiper) GetNodes() []string {
-	log.Error("Implement me")
-	return make([]string,0)
+	
+	return g.peers
 }
 
 // SetIdentifier implements gossip.BaseGossiper. It changes the identifier sent
 // with messages originating from this gossiper.
 func (g *Gossiper) SetIdentifier(id string) {
-	log.Error("Implement me")
+	g.identifier = id
 }
 
 // GetIdentifier implements gossip.BaseGossiper. It returns the currently used
 // identifier for outgoing messages from this gossiper.
 func (g *Gossiper) GetIdentifier() string {
-	log.Error("Implement me")
-	return ""
+	return g.identifier
 }
 
 // RegisterCallback implements gossip.BaseGossiper. It sets the callback that
 // must be called each time a new message arrives.
 func (g *Gossiper) RegisterCallback(m NewMessageCallback) {
-	log.Error("Implement me")
+	g.callback = m
 }

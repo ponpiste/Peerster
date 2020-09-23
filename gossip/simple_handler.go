@@ -5,8 +5,7 @@ package gossip
 
 import (
 	"net"
-
-	"golang.org/x/xerrors"
+	"fmt"
 )
 
 // Exec is the function that the gossiper uses to execute the handler for a SimpleMessage
@@ -14,5 +13,7 @@ import (
 // - add message's relay address to the known peers
 // - update the relay field
 func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
-	return xerrors.Errorf("Implement me")
+
+	fmt.Println("what to do here ???")
+	return nil
 }
