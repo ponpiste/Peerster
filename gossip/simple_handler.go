@@ -5,7 +5,7 @@ package gossip
 
 import (
 	"net"
-	"fmt"
+	"encoding/json"
 )
 
 // Exec is the function that the gossiper uses to execute the handler for a SimpleMessage
@@ -14,6 +14,21 @@ import (
 // - update the relay field
 func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 
-	fmt.Println("what to do here ???")
+	var new_msg = SimpleMessage {
+		OriginPeerName: msg.OriginPeerName,
+		RelayPeerAddr: g.address,
+		Contents: msg.Contents,
+	}
+
+	g.callback(msg.OriginPeerName, GossipPacket{&new_msg})
+
+	b, err := json.Marshal(new_msg)
+	if err != nil {
+		return err
+	}
+
+	g.broadcast(b)
+	g.AddAddresses(msg.RelayPeerAddr)
+
 	return nil
 }

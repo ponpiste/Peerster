@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"net"
 	"fmt"
+	"encoding/json"
 )
 
 // BaseGossipFactory provides a factory to instantiate a Gossiper
@@ -45,9 +46,7 @@ type Gossiper struct {
 func NewGossiper(address, identifier string) (BaseGossiper, error) {
 
 	g := Gossiper{
-		Handlers: map[reflect.Type]interface{} {
-			reflect.TypeOf(SimpleMessage {}): SimpleMessage {},
-		},
+		Handlers: make(map[reflect.Type]interface{}),
 		address: address,
 		identifier: identifier,
 		peers: make([]string, 0),
@@ -80,21 +79,34 @@ func (g *Gossiper) Run(ready chan struct{}) {
 
 	ready <- struct{}{}
 
-	buffer := make([]byte, 1024)
-	for {
+	b := make([]byte, 1024)
 
-		_, client_addr, err := g.conn.ReadFromUDP(buffer)
+	for  {
+
+		n, sender, err := g.conn.ReadFromUDP(b)
 		if err != nil {
 			panic(fmt.Sprintf("Could not read from UDP addr: %v", err))
 		}
 
-		// Todo: turn into JSON into SimpleMessage
-		var msg SimpleMessage
-		packet := GossipPacket {&msg}
+		fmt.Println()
+		fmt.Println("Received: ")
+		for _, x := range b[:n] {
+			fmt.Printf(" %v",x)
+		}
 
-		// Todo
-		g.callback(client_addr.String(), packet)
-		msg.Exec(g, client_addr)
+		if string(b[:n]) == stopMsg {
+			g.conn.Close()
+			break
+		}
+
+		var msg SimpleMessage
+		err = json.Unmarshal(b[:n], &msg)
+
+		if err != nil {
+			panic(fmt.Sprintf("Error unmarshalling the json: %v", err))
+		}
+
+		g.ExecuteHandler(&msg, sender)
 	}
 }
 
@@ -108,12 +120,15 @@ func (g *Gossiper) Stop() {
 	if err != nil {
 		panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
 	}
-	g.conn.Close()
 }
 
-// AddSimpleMessage implements gossip.BaseGossiper. It takes a text that will be
-// spread through the gossip network with the identifier of g.
-func (g *Gossiper) AddSimpleMessage(text string) {
+func (g *Gossiper) broadcast(b []byte) {
+
+	fmt.Println()
+	fmt.Println("Sent: ")
+	for _, x := range b {
+		fmt.Printf(" %v",x)
+	}
 
 	for _, peer := range g.peers {
 
@@ -122,18 +137,29 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 			panic(fmt.Sprintf("Could not resolve UDP addr: %v", err))
 		}
 
-		conn, err := net.DialUDP("udp4", nil, addr)
-		if err != nil {
-			panic(fmt.Sprintf("Could not dial UDP addr: %v", err))
-		}
-
-		_, err = conn.Write([]byte(text))
+		_, err = g.conn.WriteToUDP(b, addr)
 		if err != nil {
 			panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
 		}
-
-		conn.Close()
 	}
+}
+
+// AddSimpleMessage implements gossip.BaseGossiper. It takes a text that will be
+// spread through the gossip network with the identifier of g.
+func (g *Gossiper) AddSimpleMessage(text string) {
+
+	var msg = SimpleMessage {
+		OriginPeerName: g.identifier,
+		RelayPeerAddr: g.address,
+		Contents: text,
+	}
+
+	b, err := json.Marshal(msg)
+	if err != nil {
+		panic(fmt.Sprintf("Error marshalling the json: %v", err))
+	}
+
+	g.broadcast(b)
 }
 
 // AddAddresses implements gossip.BaseGossiper. It takes any number of node
