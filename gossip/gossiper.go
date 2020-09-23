@@ -104,6 +104,21 @@ func (g *Gossiper) Run(ready chan struct{}) {
 			panic(fmt.Sprintf("Error unmarshalling the json: %v", err))
 		}
 
+		fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
+			msg.OriginPeerName, msg.RelayPeerAddr, msg.Contents)
+
+		g.peers_mux.Lock()
+		fmt.Printf("PEERS ")
+		for i, peer := range g.peers {
+			if i==0 {
+				fmt.Printf("%v",peer)
+			} else {
+				fmt.Printf(",%v",peer)
+			}
+		}
+		g.peers_mux.Unlock()
+		fmt.Println()
+
 		g.ExecuteHandler(&msg, sender)
 	}
 }
