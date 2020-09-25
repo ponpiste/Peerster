@@ -4,4 +4,4 @@ golang-1.14:
   script:
     - go build .
     - cd cli; go build .; cd ..
-    - go test ./... -v    
+    - go test ./... -v -p 1   
