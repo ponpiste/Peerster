@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sync"
 	"encoding/json"
+	"golang.org/x/xerrors"
 )
 
 // BaseGossipFactory provides a factory to instantiate a Gossiper
@@ -32,12 +33,12 @@ func (f BaseGossipFactory) New(address, identifier string) (BaseGossiper, error)
 // - implements gossip.BaseGossiper
 type Gossiper struct {
 	Handlers map[reflect.Type]interface{}
-	address string
+	addr string
 	identifier string
 	conn *net.UDPConn
 	udpAddr *net.UDPAddr
 	callback NewMessageCallback
-	peers []string
+	peers []*net.UDPAddr
 
 	stop_chan chan int
 	peers_mux sync.Mutex
@@ -51,15 +52,17 @@ func NewGossiper(address, identifier string) (BaseGossiper, error) {
 
 	g := Gossiper{
 		Handlers: make(map[reflect.Type]interface{}),
-		address: address,
+		addr: address,
 		identifier: identifier,
-		peers: make([]string, 0),
+		peers: make([]*net.UDPAddr, 0),
 		stop_chan: make(chan int),
 	}
 
 	err := g.RegisterHandler(&SimpleMessage{})
+
+	// Should really never happen
 	if err != nil {
-		log.Fatal("failed to register", err)
+		panic(fmt.Sprintf("Could not register handler: %v", err))
 	}
 	
 	return &g, nil
@@ -71,13 +74,17 @@ func NewGossiper(address, identifier string) (BaseGossiper, error) {
 // address. The ready chan must be closed when it is running.
 func (g *Gossiper) Run(ready chan struct{}) {
 
-	var err error
-	g.udpAddr, err = net.ResolveUDPAddr("udp", g.address)
+	udpAddr, err := net.ResolveUDPAddr("udp", g.addr)
+
+	// Should really never happen
+	// We cannot continue if there is an error here
 	if err != nil {
 		panic(fmt.Sprintf("Could not resolve UDP addr: %v", err))
 	}
-
+	g.udpAddr = udpAddr
 	g.conn, err = net.ListenUDP("udp", g.udpAddr)
+
+	// Should really never happen
 	if err != nil {
 		panic(fmt.Sprintf("Could not listen to UDP addr: %v", err))
 	}
@@ -89,6 +96,8 @@ func (g *Gossiper) Run(ready chan struct{}) {
 	for  {
 
 		n, sender, err := g.conn.ReadFromUDP(b)
+
+		// Should really never happen
 		if err != nil {
 			panic(fmt.Sprintf("Could not read from UDP addr: %v", err))
 		}
@@ -102,11 +111,17 @@ func (g *Gossiper) Run(ready chan struct{}) {
 		var msg SimpleMessage
 		err = json.Unmarshal(b[:n], &msg)
 
+		// Might happen once a day
+		// In theory, we could receive anything
 		if err != nil {
-			panic(fmt.Sprintf("Error unmarshalling the json: %v", err))
+			log.Error("Error parsing message:", err)
 		}
 
-		g.ExecuteHandler(&msg, sender)
+		// Might happen sometimes
+		err = g.ExecuteHandler(&msg, sender)
+		if err != nil {
+			log.Error("Error executing handler:", err)
+		}
 
 
 		fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
@@ -133,29 +148,30 @@ func (g *Gossiper) Run(ready chan struct{}) {
 func (g *Gossiper) Stop() { 
 	
 	_, err := g.conn.WriteToUDP([]byte(stopMsg), g.udpAddr)
+
+	// Should really never happen
+	// We should be able to write to ourselves
 	if err != nil {
 		panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
 	}
 	<- g.stop_chan
 }
 
-func (g *Gossiper) broadcast(b []byte, blacklist string) {
+func (g *Gossiper) broadcast(b []byte, blacklisted string) {
 
 	g.peers_mux.Lock()
 	defer g.peers_mux.Unlock()
 
 	for _, peer := range g.peers {
 
-		if peer == blacklist {continue}
+		if peer.String() == blacklisted {continue}
 
-		addr, err := net.ResolveUDPAddr("udp", peer)
-		if err != nil {
-			panic(fmt.Sprintf("Could not resolve UDP addr: %v", err))
-		}
+		_, err := g.conn.WriteToUDP(b, peer)
 
-		_, err = g.conn.WriteToUDP(b, addr)
+		// Might happen once a day
+		// The peer may have closed the socket
 		if err != nil {
-			panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
+			log.Error("Could not write to UDP addr:", err)
 		}
 	}
 }
@@ -179,11 +195,13 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 
 	var msg = SimpleMessage {
 		OriginPeerName: g.identifier,
-		RelayPeerAddr: g.address,
+		RelayPeerAddr: g.addr,
 		Contents: text,
 	}
 
 	b, err := json.Marshal(msg)
+
+	// Should really never happen
 	if err != nil {
 		panic(fmt.Sprintf("Error marshalling the json: %v", err))
 	}
@@ -195,24 +213,35 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 // addresses that the gossiper can contact in the gossiping network.
 func (g *Gossiper) AddAddresses(addresses ...string) error {
 
-	g.peers_mux.Lock()
-	defer g.peers_mux.Unlock()
+	var err error = nil
 
 	for _, addr := range addresses {
 
+		udpAddr, err := net.ResolveUDPAddr("udp", addr)
+
+		// Might happen sometimes
+		if err != nil {
+			err = xerrors.Errorf("At least one address couldn't be resolved",)
+			log.Error("Error resolving address:", err)
+		}
+
+		g.peers_mux.Lock()
+		defer g.peers_mux.Unlock()
+
 		found := false
 		for _, peer := range g.peers {
-			if peer == addr {
+			if peer.String() == udpAddr.String() {
 				found = true
+				break
 			}
 		}
 
+		// Likely to happen once a day
 		if !found {
-			g.peers = append(g.peers, addr)
+			g.peers = append(g.peers, udpAddr)
 		}
 	}
-
-	return nil
+	return err
 }
 
 // GetNodes implements gossip.BaseGossiper. It returns the list of nodes this
@@ -222,7 +251,14 @@ func (g *Gossiper) GetNodes() []string {
 	g.peers_mux.Lock()
 	defer g.peers_mux.Unlock()
 
-	cpy := append([]string{}, g.peers...)
+	// return a copy otherwise the caller
+	// gets a pointer to the real peers which
+	// can change and which he can modify
+
+	cpy := make([]string, len(g.peers))
+	for i, peer := range g.peers {
+		cpy[i] = peer.String()
+	}
 	return cpy
 }
 

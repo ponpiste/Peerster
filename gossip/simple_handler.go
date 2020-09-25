@@ -5,7 +5,9 @@ package gossip
 
 import (
 	"net"
+	"fmt"
 	"encoding/json"
+	"golang.org/x/xerrors"
 )
 
 // Exec is the function that the gossiper uses to execute the handler for a SimpleMessage
@@ -16,19 +18,28 @@ func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 
 	var new_msg = SimpleMessage {
 		OriginPeerName: msg.OriginPeerName,
-		RelayPeerAddr: g.address,
+		RelayPeerAddr: g.addr,
 		Contents: msg.Contents,
 	}
 
-	g.callback(msg.OriginPeerName, GossipPacket{&new_msg})
+	// the callback might block or be very long
+	go g.callback(msg.OriginPeerName, GossipPacket{&new_msg})
 
 	b, err := json.Marshal(new_msg)
+
+	// Should really never happen
 	if err != nil {
-		return err
+		panic(fmt.Sprintf("Could not parse JSON: %v", err))
 	}
 
-	g.AddAddresses(msg.RelayPeerAddr)
 	go g.broadcast(b, msg.RelayPeerAddr)
+	err = g.AddAddresses(msg.RelayPeerAddr)
+
+	// Might happen once a day
+	// In theory, anything could be in the packet
+	if err != nil {
+		return xerrors.Errorf(fmt.Sprintf("Error adding address: %v", err))
+	}
 	
 	return nil
 }
