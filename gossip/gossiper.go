@@ -9,7 +9,6 @@ import (
 	"net"
 	"fmt"
 	"sync"
-	"time"
 	"encoding/json"
 )
 
@@ -40,6 +39,7 @@ type Gossiper struct {
 	callback NewMessageCallback
 	peers []string
 
+	stop_chan chan int
 	peers_mux sync.Mutex
 }
 
@@ -54,6 +54,7 @@ func NewGossiper(address, identifier string) (BaseGossiper, error) {
 		address: address,
 		identifier: identifier,
 		peers: make([]string, 0),
+		stop_chan: make(chan int),
 	}
 
 	err := g.RegisterHandler(&SimpleMessage{})
@@ -71,12 +72,12 @@ func NewGossiper(address, identifier string) (BaseGossiper, error) {
 func (g *Gossiper) Run(ready chan struct{}) {
 
 	var err error
-	g.udpAddr, err = net.ResolveUDPAddr("udp4", g.address)
+	g.udpAddr, err = net.ResolveUDPAddr("udp", g.address)
 	if err != nil {
 		panic(fmt.Sprintf("Could not resolve UDP addr: %v", err))
 	}
 
-	g.conn, err = net.ListenUDP("udp4", g.udpAddr)
+	g.conn, err = net.ListenUDP("udp", g.udpAddr)
 	if err != nil {
 		panic(fmt.Sprintf("Could not listen to UDP addr: %v", err))
 	}
@@ -94,6 +95,7 @@ func (g *Gossiper) Run(ready chan struct{}) {
 
 		if string(b[:n]) == stopMsg {
 			g.conn.Close()
+			g.stop_chan <- 1
 			break
 		}
 
@@ -103,6 +105,9 @@ func (g *Gossiper) Run(ready chan struct{}) {
 		if err != nil {
 			panic(fmt.Sprintf("Error unmarshalling the json: %v", err))
 		}
+
+		g.ExecuteHandler(&msg, sender)
+
 
 		fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
 			msg.OriginPeerName, msg.RelayPeerAddr, msg.Contents)
@@ -118,8 +123,6 @@ func (g *Gossiper) Run(ready chan struct{}) {
 		}
 		g.peers_mux.Unlock()
 		fmt.Println()
-
-		g.ExecuteHandler(&msg, sender)
 	}
 }
 
@@ -133,8 +136,7 @@ func (g *Gossiper) Stop() {
 	if err != nil {
 		panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
 	}
-	// Todo trouver mieux
-	time.Sleep(time.Millisecond * 300)
+	<- g.stop_chan
 }
 
 func (g *Gossiper) broadcast(b []byte, blacklist string) {
@@ -146,7 +148,7 @@ func (g *Gossiper) broadcast(b []byte, blacklist string) {
 
 		if peer == blacklist {continue}
 
-		addr, err := net.ResolveUDPAddr("udp4", peer)
+		addr, err := net.ResolveUDPAddr("udp", peer)
 		if err != nil {
 			panic(fmt.Sprintf("Could not resolve UDP addr: %v", err))
 		}
