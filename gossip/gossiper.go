@@ -226,7 +226,6 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 		}
 
 		g.peers_mux.Lock()
-		defer g.peers_mux.Unlock()
 
 		found := false
 		for _, peer := range g.peers {
@@ -236,10 +235,10 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 			}
 		}
 
-		// Likely to happen once a day
 		if !found {
 			g.peers = append(g.peers, udpAddr)
 		}
+		g.peers_mux.Unlock()
 	}
 	return err
 }

@@ -3,7 +3,6 @@ package gossip
 import (
 	"testing"
 	"time"
-	"fmt"
 	"github.com/stretchr/testify/require"
 )
 
