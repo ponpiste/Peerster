@@ -30,14 +30,17 @@ func main() {
 func sendMsg(address string, p *client.ClientMessage) {
 
 	b, err := json.Marshal(p)
+
+	// Should really never happen
 	if err != nil {
-		log.Fatal("failed to dial", err)
-	    return
+		panic(fmt.Sprintf("Failed to marshal client message: %v", err))
 	}
 
 	_, err = http.Post(address + "/message", "application/json", bytes.NewBuffer(b))
+
+	// Might happen once a day
 	if err != nil {
-		log.Fatal("failed to send http post", err)
+		log.Error("failed to send http post", err)
 	    return
 	}
 }

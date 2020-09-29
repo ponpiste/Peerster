@@ -22,10 +22,14 @@ func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 		Contents: msg.Contents,
 	}
 
+	var packet = GossipPacket {
+		Simple: &new_msg,
+	}
+
 	// the callback might block or be very long
 	go g.callback(msg.OriginPeerName, GossipPacket{&new_msg})
 
-	b, err := json.Marshal(new_msg)
+	b, err := json.Marshal(packet)
 
 	// Should really never happen
 	if err != nil {
@@ -33,7 +37,12 @@ func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	}
 
 	go g.broadcast(b, msg.RelayPeerAddr)
-	err = g.AddAddresses(msg.RelayPeerAddr)
+
+	// The call is synchronous because
+	// later in this thread we want to
+	// print the list of peers which
+	// should include this address
+	g.AddAddresses(msg.RelayPeerAddr)
 
 	// Might happen once a day
 	// In theory, anything could be in the packet

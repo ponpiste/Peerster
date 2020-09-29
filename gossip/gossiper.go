@@ -91,7 +91,9 @@ func (g *Gossiper) Run(ready chan struct{}) {
 
 	ready <- struct{}{}
 
-	b := make([]byte, 1024)
+	// The usual size of a MTU
+	// is 1500 bytes
+	b := make([]byte, 1500)
 
 	for  {
 
@@ -102,42 +104,36 @@ func (g *Gossiper) Run(ready chan struct{}) {
 			panic(fmt.Sprintf("Could not read from UDP addr: %v", err))
 		}
 
+		// Close after having received the packet
+		// otherwise the connection is closed
+		// while reading
 		if string(b[:n]) == stopMsg {
 			g.conn.Close()
 			g.stop_chan <- 1
 			break
 		}
 
-		var msg SimpleMessage
-		err = json.Unmarshal(b[:n], &msg)
+		var packet GossipPacket
+		err = json.Unmarshal(b[:n], &packet)
 
 		// Might happen once a day
 		// In theory, we could receive anything
 		if err != nil {
 			log.Error("Error parsing message:", err)
+			continue
 		}
 
 		// Might happen sometimes
-		err = g.ExecuteHandler(&msg, sender)
+		err = g.ExecuteHandler(packet.Simple, sender)
 		if err != nil {
 			log.Error("Error executing handler:", err)
+			continue
 		}
 
 
 		fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
-			msg.OriginPeerName, msg.RelayPeerAddr, msg.Contents)
-
-		g.peers_mux.Lock()
-		fmt.Printf("PEERS ")
-		for i, peer := range g.peers {
-			if i==0 {
-				fmt.Printf("%v",peer)
-			} else {
-				fmt.Printf(",%v",peer)
-			}
-		}
-		g.peers_mux.Unlock()
-		fmt.Println()
+			packet.Simple.OriginPeerName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
+		g.printPeers()
 	}
 }
 
@@ -154,7 +150,29 @@ func (g *Gossiper) Stop() {
 	if err != nil {
 		panic(fmt.Sprintf("Could not write to UDP addr: %v", err))
 	}
+
+	// Stop() blocks until the connection
+	// is closed. Avoids same port being reused
+	// after a call to Stop() and which is 
+	// not closed yet
 	<- g.stop_chan
+}
+
+func (g *Gossiper) printPeers() {
+
+	g.peers_mux.Lock()
+
+	fmt.Printf("PEERS ")
+	for i, peer := range g.peers {
+		if i==0 {
+			fmt.Printf("%v",peer)
+		} else {
+			fmt.Printf(",%v",peer)
+		}
+	}
+
+	g.peers_mux.Unlock()
+	fmt.Println()
 }
 
 func (g *Gossiper) broadcast(b []byte, blacklisted string) {
@@ -181,17 +199,7 @@ func (g *Gossiper) broadcast(b []byte, blacklisted string) {
 func (g *Gossiper) AddSimpleMessage(text string) {
 
 	fmt.Printf("CLIENT MESSAGE %v\n", text)
-	g.peers_mux.Lock()
-	fmt.Printf("PEERS ")
-	for i, peer := range g.peers {
-		if i==0 {
-			fmt.Printf("%v",peer)
-		} else {
-			fmt.Printf(",%v",peer)
-		}
-	}
-	g.peers_mux.Unlock()
-	fmt.Println()
+	g.printPeers()
 
 	var msg = SimpleMessage {
 		OriginPeerName: g.identifier,
@@ -199,7 +207,11 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 		Contents: text,
 	}
 
-	b, err := json.Marshal(msg)
+	var packet = GossipPacket {
+		Simple: &msg,
+	}
+
+	b, err := json.Marshal(packet)
 
 	// Should really never happen
 	if err != nil {
@@ -222,7 +234,12 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 		// Might happen sometimes
 		if err != nil {
 			err = xerrors.Errorf("At least one address couldn't be resolved",)
+
+			// log because in Exec() we use
+			// AddAddress in a Go routine and
+			// do not use the error
 			log.Error("Error resolving address:", err)
+			continue
 		}
 
 		g.peers_mux.Lock()
