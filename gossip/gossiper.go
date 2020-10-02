@@ -5,7 +5,7 @@ package gossip
 
 import (
 	"context"
-	"go.dedis.ch/cs438/hw1_new/gossip/watcher"
+	"go.dedis.ch/cs438/hw1/gossip/watcher"
 	"reflect"
 
 	"go.dedis.ch/onet/v3/log"
