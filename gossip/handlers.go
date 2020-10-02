@@ -1,6 +1,3 @@
-// ========== CS-438 HW0 Skeleton ===========
-// *** Do not change this file ***
-
 package gossip
 
 import (

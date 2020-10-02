@@ -6,7 +6,7 @@
     <meta http-equiv="x-ua-compatible" content="ie=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title> COM438 - Gossip with style</title>
+    <title> CS438 - Gossip with style</title>
 
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/bootstrap.min.css">
@@ -57,6 +57,14 @@
                     <button type="submit" id="submitnode" class="btn btn-primary">Add node</button>
                 </form>
             </div>
+            <!--List of origins for sending private messages-->
+            <div class="row top-buffer">
+                <label class="text-center" for="identifier">Nodes with private connectivity</label>
+                <ul class="private-origin list-group" id="originbox">
+                    
+                </ul>
+                <div class="divider"></div>
+            </div>
         </div>
         <div class="col-md-1"></div>
         <div class="col-md-9">
@@ -70,10 +78,6 @@
                         <!--&lt;!&ndash;<h4 class="list-group-item-heading">Second List Group Item Heading</h4>&ndash;&gt;-->
                         <!--<p class="list-group-item-text">List Group Item Text</p>-->
                     <!--</li>-->
-                    <!--<li class="list-group-item">-->
-                        <!--&lt;!&ndash;<h4 class="list-group-item-heading">Third List Group Item Heading</h4>&ndash;&gt;-->
-                        <!--<p class="list-group-item-text">List Group Item Text</p>-->
-                    <!--</li>-->
                 </ul>
             </div>
             <form>
@@ -84,10 +88,20 @@
                     <button type="submit" id="submittext" class="col-md-2 btn btn-primary">Send</button>
                 </div>
             </form>
+            <hr>
+            <form>
+                <div class="form-group row">
+                    <div class="col-md-10">
+                        <textarea class="form-control" id="privatetext" rows="1" placeholder="Private text to send..."></textarea>
+                        
+                        <textarea class="form-control" id="dest" rows="1" placeholder="Private node name (not IP:PORT) to send..."></textarea>
+                    </div>
+                    <button type="submit" id="submitprivate" class="col-md-2 btn btn-primary">Send Private</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
-</body>
 
 
 </html>

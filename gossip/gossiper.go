@@ -4,9 +4,11 @@
 package gossip
 
 import (
-	"go.dedis.ch/onet/v3/log"
+	"context"
+	"go.dedis.ch/cs438/hw1_new/gossip/watcher"
 	"reflect"
-	"golang.org/x/xerrors"
+
+	"go.dedis.ch/onet/v3/log"
 )
 
 // BaseGossipFactory provides a factory to instantiate a Gossiper
@@ -14,53 +16,53 @@ import (
 // - implements gossip.GossipFactory
 type BaseGossipFactory struct{}
 
-// stopMsg is used to notify the listener when we want to close the
+// stopMsg is used to notifier the listener when we want to close the
 // connection, so that the listener knows it can stop listening.
 const stopMsg = "stop"
 
 // New implements gossip.GossipFactory. It creates a new gossiper.
-func (f BaseGossipFactory) New(address, identifier string) (BaseGossiper, error) {
-	return NewGossiper(address, identifier)
+func (f BaseGossipFactory) New(address, identifier string, antiEntropy int, routeTimer int) (BaseGossiper, error) {
+	return NewGossiper(address, identifier, antiEntropy, routeTimer)
 }
 
-// Gossiper provides the functionalities to handle a distributed gossip
+// Gossiper privides the functionalities to handle a distributes gossip
 // protocol.
 //
 // - implements gossip.BaseGossiper
 type Gossiper struct {
+	inWatcher  watcher.Watcher
+	outWatcher watcher.Watcher
+	// routes holds the routes to different destinations. The key is the Origin,
+	// or destination.
+	routes map[string]*RouteStruct
 	Handlers map[reflect.Type]interface{}
 	// *** Add more here
 }
 
 // NewGossiper returns a Gossiper that is able to listen to the given address
 // and which has the given identifier. The address must be a valid IPv4 UDP
-// address. To run the gossip protocol and create the UDP connection, call `Run`
-// on the gossiper.
-func NewGossiper(address, identifier string) (BaseGossiper, error) {
+// address. This method can panic if it is not possible to create a
+// listener on that address. To run the gossip protocol, call `Run` on the
+// gossiper.
+func NewGossiper(address, identifier string, antiEntropy int, routeTimer int) (BaseGossiper, error) {
 	log.Error("Implement me")
 
-	// TODO define a gossiper g, then enable the following code
+	// TODO define g with the following fields for the Watcher
 	/*
-	err := g.RegisterHandler(&SimpleMessage{})
-	if err != nil {
-		log.Fatal("failed to register", err)
-	}
-	*/
-	return nil, xerrors.New("implement me")
+	inWatcher: watcher.NewSimpleWatcher(),
+	outWatcher: watcher.NewSimpleWatcher(),
+	 */
+
+	return nil, nil
 }
 
-// Run implements gossip.BaseGossiper. It creates the UDP connection and starts
-// the listening of UDP datagrams on the given address, until `Stop` is called.
-// This method can panic if it is not possible to create the connection on that
-// address. The ready chan must be closed when it is running.
+// Run implements gossip.BaseGossiper. It starts the listening of UDP datagrams
+// on the given address and starts the antientropy. This is a blocking function.
 func (g *Gossiper) Run(ready chan struct{}) {
 	log.Error("Implement me")
 }
 
-// Stop implements gossip.BaseGossiper. It closes the UDP connection. You should
-// be sure that you stopped listening before closing the connection. For that
-// you can send a stop message to the listener, which then knows that it can
-// stop listening.
+// Stop implements gossip.BaseGossiper. It closes the UDP connection
 func (g *Gossiper) Stop() {
 	log.Error("Implement me")
 }
@@ -68,6 +70,11 @@ func (g *Gossiper) Stop() {
 // AddSimpleMessage implements gossip.BaseGossiper. It takes a text that will be
 // spread through the gossip network with the identifier of g.
 func (g *Gossiper) AddSimpleMessage(text string) {
+	log.Error("Implement me")
+}
+
+// AddPrivateMessage sends the message to the next hop.
+func (g *Gossiper) AddPrivateMessage(text, dest, origin string, hoplimit int) {
 	log.Error("Implement me")
 }
 
@@ -85,6 +92,12 @@ func (g *Gossiper) GetNodes() []string {
 	return make([]string,0)
 }
 
+// GetDirectNodes implements gossip.BaseGossiper. It returns the list of nodes whose routes are known to this node
+func (g *Gossiper) GetDirectNodes() []string {
+	log.Error("Implement me")
+	return make([]string,0)
+}
+
 // SetIdentifier implements gossip.BaseGossiper. It changes the identifier sent
 // with messages originating from this gossiper.
 func (g *Gossiper) SetIdentifier(id string) {
@@ -98,8 +111,48 @@ func (g *Gossiper) GetIdentifier() string {
 	return ""
 }
 
+// GetRoutingTable implements gossip.BaseGossiper. It returns the known routes.
+func (g *Gossiper) GetRoutingTable() map[string]*RouteStruct {
+	log.Error("Implement me")
+	return nil
+}
+
 // RegisterCallback implements gossip.BaseGossiper. It sets the callback that
 // must be called each time a new message arrives.
 func (g *Gossiper) RegisterCallback(m NewMessageCallback) {
 	log.Error("Implement me")
 }
+
+// Watch implements gossip.BaseGossiper. It returns a chan populated with new
+// incoming packets
+func (g *Gossiper) Watch(ctx context.Context, fromIncoming bool) <-chan CallbackPacket {
+	w := g.inWatcher
+
+	if !fromIncoming {
+		w = g.outWatcher
+	}
+
+	o := observer{make(chan CallbackPacket, 1)}
+
+	w.Add(o)
+
+	go func() {
+		<-ctx.Done()
+		w.Remove(o)
+		close(o.c)
+	}()
+
+	return o.c
+}
+
+// - implements watcher.observable
+type observer struct {
+	c chan CallbackPacket
+}
+
+func (o observer) Notify(i interface{}) {
+	o.c <- i.(CallbackPacket)
+}
+
+// An example of how to send an incoming packet to the Watcher
+// g.inWatcher.Notify(CallbackPacket{Addr: addrStr, Msg: gossipPacket})

@@ -1,4 +1,4 @@
-module go.dedis.ch/cs438/peerster/hw0
+module go.dedis.ch/cs438/hw1
 
 go 1.14
 
