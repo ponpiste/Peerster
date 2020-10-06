@@ -1,4 +1,4 @@
-// ========== CS-438 HW0 Skeleton ===========
+// ========== CS-438 HW1 Skeleton ===========
 // *** Do not change this file ***
 
 // This file should be the entering point to your program.
@@ -10,8 +10,8 @@ import (
 	"flag"
 	"strings"
 
-	"go.dedis.ch/cs438/peerster/hw0/client"
-	"go.dedis.ch/cs438/peerster/hw0/gossip"
+	"go.dedis.ch/cs438/hw1/gossip"
+	"go.dedis.ch/cs438/hw1/client"
 
 	"go.dedis.ch/onet/v3/log"
 )
@@ -22,10 +22,12 @@ const defaultName = "peerXYZ"               // Give a unique default name
 func main() { 
 
 	UIPort := flag.String("UIPort", client.DefaultUIPort, "port for gossip communication with peers")
+	antiEntropy := flag.Int("antiEntropy", 10, "timeout in seconds for anti-entropy (relevant only fo rPart2)' default value 10 seconds.")
 	gossipAddr := flag.String("gossipAddr", defaultGossipAddr, "ip:port for gossip communication with peers")
 	ownName := flag.String("name", defaultName, "identifier used in the chat")
 	peers := flag.String("peers", "", "peer addresses used for bootstrap")
 	broadcastMode := flag.Bool("broadcast", true, "run gossiper in broadcast mode")
+	routeTimer := flag.Int("rtimer", 0, "route rumors sending period in seconds, 0 to disable sending of route rumors (default)")
 	flag.Parse()
 
 	UIAddress := "127.0.0.1:" + *UIPort
@@ -35,7 +37,7 @@ func main() {
 	// The work happens in the gossip folder. You should not touch the code in
 	// this package.
 	fac := gossip.GetFactory()
-	g, err := fac.New(gossipAddress, *ownName)
+	g, err := fac.New(gossipAddress, *ownName, *antiEntropy, *routeTimer)
 	if err != nil {
 		panic(err)
 	}

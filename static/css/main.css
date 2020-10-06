@@ -7,4 +7,11 @@
     overflow-y:scroll;
 }
 
+.form-private{
+    max-height: 300px;
+    overflow-y:scroll;
+}
+
+
+
 .top-buffer { margin-top:40px; }

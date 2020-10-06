@@ -12,8 +12,8 @@ import (
 	"os"
 	"sync"
 
-	"go.dedis.ch/cs438/peerster/hw0/client"
-	"go.dedis.ch/cs438/peerster/hw0/gossip"
+	"go.dedis.ch/cs438/hw1/client"
+	"go.dedis.ch/cs438/hw1/gossip"
 
 	"go.dedis.ch/onet/v3/log"
 
@@ -30,14 +30,14 @@ type Controller struct {
 	gossipAddress string
 	gossiper      gossip.BaseGossiper
 	cliConn       net.Conn
-	messages      []GUIMessage
+	messages      []CtrlMessage
 	// simpleMode: true if the gossiper should broadcast messages from clients as SimpleMessages
 	simpleMode bool
 }
 
-// GUIMessage ...
-type GUIMessage struct {
+type CtrlMessage struct {
 	Origin string
+	ID     uint32
 	Text   string
 }
 
@@ -65,13 +65,20 @@ func (c *Controller) Run() {
 	r := mux.NewRouter()
 	r.Methods("GET").Path("/message").HandlerFunc(c.GetMessage)
 	r.Methods("POST").Path("/message").HandlerFunc(c.PostMessage)
+	r.Methods("GET").Path("/origin").HandlerFunc(c.GetDirectNode)
 	r.Methods("GET").Path("/node").HandlerFunc(c.GetNode)
 	r.Methods("POST").Path("/node").HandlerFunc(c.PostNode)
 	r.Methods("GET").Path("/id").HandlerFunc(c.GetIdentifier)
 	r.Methods("POST").Path("/id").HandlerFunc(c.SetIdentifier)
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 	loggedRouter := handlers.LoggingHandler(os.Stdout, r)
-	http.ListenAndServe(c.uiAddress, loggedRouter)
+
+	server := &http.Server{Addr: c.uiAddress, Handler: loggedRouter}
+
+	err := server.ListenAndServe()
+	if err != nil {
+		panic(err)
+	}
 }
 
 // GET /message returns all messages seen so far as json encoded Message
@@ -107,10 +114,23 @@ func (c *Controller) PostMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Lvl1("The controller received an UI message \"", message.Contents, "\"")
+	log.Lvl1("the controller received a UI message \"", message.Contents, "\"")
 
-	c.gossiper.AddSimpleMessage(message.Contents)
-	c.messages = append(c.messages, GUIMessage{c.identifier, message.Contents})
+	if c.simpleMode {
+		c.gossiper.AddSimpleMessage(message.Contents)
+		c.messages = append(c.messages, CtrlMessage{c.identifier, 0, message.Contents})
+	} else {
+		if message.Destination != "" {
+			c.gossiper.AddPrivateMessage(message.Contents, message.Destination, c.gossiper.GetIdentifier(), 10)
+			c.messages = append(c.messages, CtrlMessage{c.identifier, 0, message.Contents})
+		} else {
+
+			id := c.gossiper.AddMessage(message.Contents)
+			c.messages = append(c.messages, CtrlMessage{c.identifier, id, message.Contents})
+		}
+
+	}
+
 	w.WriteHeader(200)
 }
 
@@ -125,7 +145,18 @@ func (c *Controller) GetNode(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
-// PUT /node with address of node in the body as a string
+// GET /origin returns list of nodes in the routing table as json encoded slice of string
+func (c *Controller) GetDirectNode(w http.ResponseWriter, r *http.Request) {
+	hosts := c.gossiper.GetDirectNodes()
+	if err := json.NewEncoder(w).Encode(hosts); err != nil {
+		log.Error(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(200)
+}
+
+// POST /node with address of node in the body as a string
 func (c *Controller) PostNode(w http.ResponseWriter, r *http.Request) {
 	text, ok := readString(w, r)
 	if !ok {
@@ -163,10 +194,19 @@ func (c *Controller) SetIdentifier(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
+// NewMessage ...
 func (c *Controller) NewMessage(origin string, msg gossip.GossipPacket) {
 	c.Lock()
 	defer c.Unlock()
-	c.messages = append(c.messages, GUIMessage{origin, msg.Simple.Contents})
+
+	if msg.Rumor != nil {
+
+		c.messages = append(c.messages, CtrlMessage{msg.Rumor.Origin, msg.Rumor.ID, msg.Rumor.Text})
+	}
+	if msg.Simple != nil {
+
+		c.messages = append(c.messages, CtrlMessage{msg.Simple.OriginPeerName, 0, msg.Simple.Contents})
+	}
 	log.Lvl1("messages", c.messages)
 }
 
