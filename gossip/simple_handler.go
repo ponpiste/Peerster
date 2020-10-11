@@ -5,6 +5,7 @@ package gossip
 
 import (
 	"net"
+	"fmt"
 	"golang.org/x/xerrors"
 	"go.dedis.ch/onet/v3/log"
 )
@@ -14,6 +15,9 @@ import (
 // - add message's relay address to the known peers
 // - update the relay field
 func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
+
+	fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
+		msg.OriginPeerName, msg.RelayPeerAddr, msg.Contents)
 
 	var new_msg = SimpleMessage {
 		OriginPeerName: msg.OriginPeerName,
@@ -51,6 +55,9 @@ func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 
 // Exec is the function that the gossiper uses to execute the handler for a RumorMessage
 func (msg *RumorMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
+
+	fmt.Printf("RUMOR origin %v from %v ID %v contents %v\n", 
+		msg.Origin, addr.String(), msg.ID, msg.Text)
 
 	// if message not received before (lower , equal, greater than current sequence number)
 	//   send to random peer (blacklist the current one)
@@ -161,6 +168,9 @@ func (msg *StatusPacket) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	var mp = make(map[string]uint32)
 	var needed = false
 
+	// Todo: lock the stdout when printing
+	fmt.Printf("STATUS from %v", addr.String())
+
 	for _, i := range msg.Want {
 
 		val, ok := g.messages[i.Identifier]
@@ -168,8 +178,10 @@ func (msg *StatusPacket) Exec(g *Gossiper, addr *net.UDPAddr) error {
 			needed = true
 		}
 
+		fmt.Printf(" peer %v nextID %v", i.Identifier, i.NextID)
 		mp[i.Identifier] = i.NextID
 	}
+	fmt.Println()
 
 	// receiver has other new messages
 	if needed {
@@ -231,7 +243,14 @@ func (msg *StatusPacket) Exec(g *Gossiper, addr *net.UDPAddr) error {
 		}
 	}
 
-	if has == 0 && !needed && g.ran.Intn(2) == 0 {
+	if has == 0 && !needed /*&& g.ran.Intn(2) == 0*/ {
+
+		fmt.Printf("IN SYNC WITH %v\n", addr.String())
+
+		// Todo: is this a typo ?`
+		if g.ran.Intn(2) == 0 {
+			fmt.Printf("FLIPPED COIN sending rumor to\n")
+		}
 
 		// Todo: how to remember the gossip msg ???
 		// if entry in the mongo table

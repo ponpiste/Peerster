@@ -190,10 +190,7 @@ func (g *Gossiper) Run(ready chan struct{}) {
 			continue
 		}
 
-
-		// fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
-		// 	packet.Simple.OriginPeerName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
-		// g.printPeers()
+		g.printPeers()
 	}
 }
 
@@ -328,6 +325,10 @@ func (g *Gossiper) randomPeer(blacklisted ...string) *net.UDPAddr {
 
 func (g *Gossiper) send(p GossipPacket, to *net.UDPAddr) {
 
+	if p.Rumor != nil {
+		fmt.Printf("MONGERING with %v\n", to.String())
+	}
+
 	b, err := json.Marshal(p)
 
 	// Should really never happen
@@ -437,6 +438,9 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 }
 
 func (g* Gossiper) AddMessage(text string) uint32 {
+
+	fmt.Printf("CLIENT MESSAGE %v\n", text)
+	g.printPeers()
 
 	g.addMessage(g.identifier, text)
 	id := g.getLatest(g.identifier)
