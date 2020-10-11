@@ -56,7 +56,8 @@ type Gossiper struct {
 	messages map[string][]string
 	mongering map[string]*RumorMessage
 
-	stop_chan chan int
+	stopRun chan int
+	stopAntiEntropy chan int
 	peers_mux sync.Mutex
 
 	antiEntropy int
@@ -89,7 +90,9 @@ func NewGossiper(address, identifier string, antiEntropy int, routeTimer int) (B
 		addr: address,
 		identifier: identifier,
 		peers: make([]*net.UDPAddr, 0),
-		stop_chan: make(chan int),
+
+		stopRun: make(chan int),
+		stopAntiEntropy: make(chan int),
 
 		antiEntropy: antiEntropy,
 		routeTimer: routeTimer,
@@ -98,11 +101,15 @@ func NewGossiper(address, identifier string, antiEntropy int, routeTimer int) (B
 	g.source = rand.NewSource(time.Now().UnixNano())
 	g.ran = rand.New(g.source)
 
-	err := g.RegisterHandler(&SimpleMessage{})
+	message_types := []interface{} {&SimpleMessage{}, &RumorMessage{}, &StatusPacket{}, &PrivateMessage{}}
 
-	// Should really never happen
-	if err != nil {
-		panic(fmt.Sprintf("Could not register handler: %v", err))
+	for _, i := range message_types {
+
+		err := g.RegisterHandler(i)
+		// Should really never happen
+		if err != nil {
+			panic(fmt.Sprintf("Could not register handler: %v", err))
+		}
 	}
 	
 	return &g, nil
@@ -148,8 +155,7 @@ func (g *Gossiper) Run(ready chan struct{}) {
 		// otherwise the connection is closed
 		// while reading
 		if string(b[:n]) == stopMsg {
-			g.conn.Close()
-			g.stop_chan <- 1
+			g.stopAntiEntropy <- 1
 			break
 		}
 
@@ -185,9 +191,9 @@ func (g *Gossiper) Run(ready chan struct{}) {
 		}
 
 
-		fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
-			packet.Simple.OriginPeerName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
-		g.printPeers()
+		// fmt.Printf("SIMPLE MESSAGE origin %v from %v contents %v\n", 
+		// 	packet.Simple.OriginPeerName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
+		// g.printPeers()
 	}
 }
 
@@ -209,7 +215,8 @@ func (g *Gossiper) Stop() {
 	// is closed. Avoids same port being reused
 	// after a call to Stop() and which is 
 	// not closed yet
-	<- g.stop_chan
+	<- g.stopRun
+	g.conn.Close()
 }
 
 func (g *Gossiper) addMessage(id string, msg string) {
@@ -222,21 +229,30 @@ func (g *Gossiper) runAntiEntropy() {
 
 	// Todo: how to stop this on stopMessage ?
 
+	ticker := time.NewTicker(time.Duration(g.antiEntropy) * time.Second)
+	defer ticker.Stop()
+
 	for {
+		select {
+			case <- g.stopAntiEntropy:
+				g.stopRun <- 1
+				return
+			case <- ticker.C:
 
-		// Todo factor this in a function
-		time.Sleep(time.Duration(g.antiEntropy) * time.Second)
-		addr := g.randomPeer("")
-		want := make([]PeerStatus, 0)
-		g.map2slice(want)
-		
-		packet := GossipPacket {
-			Status: &StatusPacket {
-				Want: want,
-			},
+				// Todo factor this in a function
+				addr := g.randomPeer()
+				if addr != nil {
+
+					want := g.map2slice()
+					
+					packet := GossipPacket {
+						Status: &StatusPacket {
+							Want: want,
+						},
+					}
+					go g.send(packet, addr)
+				}
 		}
-
-		go g.send(packet, addr)
 	}
 }
 
@@ -251,13 +267,15 @@ func (g *Gossiper) getLatest(id string) uint32 {
 	}
 }
 
-func (g* Gossiper) map2slice(want []PeerStatus) {
+func (g* Gossiper) map2slice() []PeerStatus {
 
 	// Todo: lock a mutex here ?
+	want := make([]PeerStatus, 0)
 	for key, value := range g.messages {
 
 		want = append(want, PeerStatus {Identifier: key, NextID: uint32(1 + len(value))})
 	}
+	return want
 }
 
 func (g *Gossiper) printPeers() {
@@ -278,7 +296,7 @@ func (g *Gossiper) printPeers() {
 }
 
 // returns random peer, or nil of no was found
-func (g *Gossiper) randomPeer(blacklisted string) *net.UDPAddr {
+func (g *Gossiper) randomPeer(blacklisted ...string) *net.UDPAddr {
 
 	g.peers_mux.Lock()
 	defer g.peers_mux.Unlock()
@@ -287,7 +305,14 @@ func (g *Gossiper) randomPeer(blacklisted string) *net.UDPAddr {
 	if n == 0 {return nil}
 
 	r := g.ran.Intn(n)
-	if g.peers[r].String() != blacklisted {
+
+	bl := false
+	for _, b := range blacklisted {
+		if b == g.peers[r].String() {
+			bl = true
+		}
+	}
+	if !bl {
 		return g.peers[r]
 	}
 
@@ -310,25 +335,32 @@ func (g *Gossiper) send(p GossipPacket, to *net.UDPAddr) {
 		panic(fmt.Sprintf("Could not parse JSON: %v", err))
 	}
 
-	g.outWatcher.Notify(CallbackPacket{Addr: to.String(), Msg: p})
-
 	_, err = g.conn.WriteToUDP(b, to)
 
 	// Might happen once a day
 	// The peer may have closed the socket
 	if err != nil {
 		log.Error("Could not write to UDP addr:", err)
+	} else {
+		g.outWatcher.Notify(CallbackPacket{Addr: to.String(), Msg: p})
 	}
 }
 
-func (g *Gossiper) broadcast(p GossipPacket, blacklisted string) {
+func (g *Gossiper) broadcast(p GossipPacket, blacklisted ...string) {
 
 	g.peers_mux.Lock()
 	defer g.peers_mux.Unlock()
 
 	for _, peer := range g.peers {
 
-		if peer.String() == blacklisted {continue}
+		bl := false
+		for _, b := range blacklisted {
+			if peer.String() == b {
+				bl = true
+			}
+		}
+
+		if bl {continue}
 		g.send(p, peer)
 	}
 }
@@ -350,7 +382,7 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 		Simple: &msg,
 	}
 
-	go g.broadcast(packet, "")
+	go g.broadcast(packet)
 }
 
 // AddPrivateMessage sends the message to the next hop.
@@ -406,7 +438,35 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 
 func (g* Gossiper) AddMessage(text string) uint32 {
 
-	return 0
+	g.addMessage(g.identifier, text)
+	id := g.getLatest(g.identifier)
+
+	receiver := g.randomPeer()
+
+	// Might happen once a day
+	if receiver == nil {
+
+		log.Error("No receiver found")
+
+	}else {
+
+		var packet = GossipPacket {
+			Rumor: &RumorMessage {
+
+				Origin: g.identifier,
+				ID: 1,
+				Text: text,
+			},
+		}
+
+		// asynchronous because the Run()
+		// method wants to go back to
+		// listening to new messages
+		go g.send(packet, receiver)
+	}
+
+	// Todo: mutex
+	return id
 }
 
 // GetNodes implements gossip.BaseGossiper. It returns the list of nodes this

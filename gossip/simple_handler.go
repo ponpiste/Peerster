@@ -26,7 +26,9 @@ func (msg *SimpleMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	}
 
 	// the callback might block or be very long
-	go g.callback(msg.OriginPeerName, packet)
+	if g.callback != nil {
+		go g.callback(msg.OriginPeerName, packet)
+	}
 
 	// asynchronous because the Run()
 	// method wants to go back to
@@ -54,14 +56,9 @@ func (msg *RumorMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	//   send to random peer (blacklist the current one)
 	//   add the current peer to list
 
-	var err error = nil
-
 	var packet = GossipPacket {
 		Rumor: msg,
 	}
-
-	// the callback might block or be very long
-	go g.callback(msg.Origin, packet)
 
 	// Todo: what to do when sequence 
 	// number is strictly greater than
@@ -70,8 +67,10 @@ func (msg *RumorMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	latest := g.getLatest(msg.Origin)
 	if latest + 1 != msg.ID {return nil}
 
-	// Todo: what callback
-	// go callback()
+	// the callback might block or be very long
+	if g.callback != nil {
+		go g.callback(msg.Origin, packet)
+	}
 
 	// Todo factor sendRumor
 	// in a function
@@ -81,14 +80,7 @@ func (msg *RumorMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	// back the gossip to the same 
 	// guy (would cause a loop)
 	receiver := g.randomPeer(addr.String())
-
-	// Might happen once a day
-	if receiver == nil {
-
-		log.Error("No receiver found")
-		err = xerrors.Errorf("No receiver found")
-
-	}else {
+	if receiver != nil {
 
 		// asynchronous because the Run()
 		// method wants to go back to
@@ -133,8 +125,7 @@ func (msg *RumorMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	// Todo: make this piece
 	// asynchronous, but do not
 	// forget mutexes
-	want := make([]PeerStatus, 0)
-	g.map2slice(want)
+	want := g.map2slice()
 	
 	packet = GossipPacket {
 		Status: &StatusPacket {
@@ -155,7 +146,7 @@ func (msg *RumorMessage) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	// add it to the queue maybe ?
 	// idk
 
-	return err
+	return nil
 }
 
 // Exec is the function that the gossiper uses to execute the handler for a StatusMessage
@@ -164,6 +155,8 @@ func (msg *StatusPacket) Exec(g *Gossiper, addr *net.UDPAddr) error {
 	// Todo: what happens if
 	// S has new messages AND 
 	// R has new messages
+
+	g.addAddress(addr)
 
 	var mp = make(map[string]uint32)
 	var needed = false
@@ -184,8 +177,7 @@ func (msg *StatusPacket) Exec(g *Gossiper, addr *net.UDPAddr) error {
 		// Todo: make this piece
 		// asynchronous, but do not
 		// forget mutexes
-		want := make([]PeerStatus, 0)
-		g.map2slice(want)
+		want := g.map2slice()
 		
 		packet := GossipPacket {
 			Status: &StatusPacket {
@@ -222,7 +214,7 @@ func (msg *StatusPacket) Exec(g *Gossiper, addr *net.UDPAddr) error {
 				Rumor: &RumorMessage {
 					Origin: g.identifier,
 					ID: i,
-					Text: value[i],
+					Text: value[i - 1],
 				},
 			}
 
