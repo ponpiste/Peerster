@@ -1,4 +1,4 @@
-// ========== CS-438 HW0 Skeleton ===========
+// ========== CS-438 HW1 Skeleton ===========
 // *** Implement here the gossiper ***
 
 package gossip
@@ -10,6 +10,7 @@ import (
 	"net"
 	"fmt"
 	"sync"
+
 	"math/rand"
     "time"
 	"encoding/json"
@@ -469,26 +470,105 @@ func (g *Gossiper) Watch(ctx context.Context, fromIncoming bool) <-chan Callback
 		w = g.outWatcher
 	}
 
-	o := observer{make(chan CallbackPacket, 1)}
+	o := &observer{
+		ch: make(chan CallbackPacket),
+	}
 
 	w.Add(o)
 
 	go func() {
 		<-ctx.Done()
+		// empty the channel
+		o.terminate()
 		w.Remove(o)
-		close(o.c)
 	}()
 
-	return o.c
+	return o.ch
 }
 
 // - implements watcher.observable
 type observer struct {
-	c chan CallbackPacket
+	sync.Mutex
+	ch      chan CallbackPacket
+	buffer  []CallbackPacket
+	closed  bool
+	running bool
 }
 
-func (o observer) Notify(i interface{}) {
-	o.c <- i.(CallbackPacket)
+func (o *observer) Notify(i interface{}) {
+	o.Lock()
+	defer o.Unlock()
+
+	if o.closed {
+		return
+	}
+
+	if o.running {
+		o.buffer = append(o.buffer, i.(CallbackPacket))
+		return
+	}
+
+	select {
+	case o.ch <- i.(CallbackPacket):
+
+	default:
+		// The buffer size is not controlled as we assume the event will be read
+		// shortly by the caller.
+		o.buffer = append(o.buffer, i.(CallbackPacket))
+
+		o.checkSize()
+
+		o.running = true
+
+		go o.run()
+	}
+}
+
+func (o *observer) run() {
+	for {
+		o.Lock()
+
+		if len(o.buffer) == 0 {
+			o.running = false
+			o.Unlock()
+			return
+		}
+
+		msg := o.buffer[0]
+		o.buffer = o.buffer[1:]
+
+		o.Unlock()
+
+		// Wait for the channel to be available to writings.
+		o.ch <- msg
+	}
+}
+
+func (o *observer) checkSize() {
+	const warnLimit = 1000
+	if len(o.buffer) >= warnLimit {
+		log.Info("Observer queue is growing insanely")
+	}
+}
+
+func (o *observer) terminate() {
+	o.Lock()
+	defer o.Unlock()
+
+	o.closed = true
+
+	if o.running {
+		o.running = false
+		o.buffer = nil
+
+		// Drain the message in transit to close the channel properly.
+		select {
+		case <-o.ch:
+		default:
+		}
+	}
+
+	close(o.ch)
 }
 
 // An example of how to send an incoming packet to the Watcher
