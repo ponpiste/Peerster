@@ -10,9 +10,10 @@ import (
 	"net"
 	"fmt"
 	"sync"
+	"math/rand"
+    "time"
 	"encoding/json"
 	"golang.org/x/xerrors"
-
 	"go.dedis.ch/onet/v3/log"
 )
 
@@ -35,21 +36,38 @@ func (f BaseGossipFactory) New(address, identifier string, antiEntropy int, rout
 //
 // - implements gossip.BaseGossiper
 type Gossiper struct {
+
+	// watchers
 	inWatcher  watcher.Watcher
 	outWatcher watcher.Watcher
+
 	// routes holds the routes to different destinations. The key is the Origin,
 	// or destination.
 	routes map[string]*RouteStruct
 	Handlers map[reflect.Type]interface{}
+
 	addr string
 	identifier string
 	conn *net.UDPConn
 	udpAddr *net.UDPAddr
 	callback NewMessageCallback
 	peers []*net.UDPAddr
+	messages map[string][]string
+	mongering map[string]*RumorMessage
 
 	stop_chan chan int
 	peers_mux sync.Mutex
+
+	antiEntropy int
+	routeTimer int
+
+	// each gossiper
+	// has its own random
+	// generator. This
+	// allows no avoid
+	// seeding in main()
+	source rand.Source
+	ran *rand.Rand
 }
 
 // NewGossiper returns a Gossiper that is able to listen to the given address
@@ -60,12 +78,24 @@ type Gossiper struct {
 func NewGossiper(address, identifier string, antiEntropy int, routeTimer int) (BaseGossiper, error) {
 
 	g := Gossiper{
+
+		inWatcher: watcher.NewSimpleWatcher(),
+		outWatcher: watcher.NewSimpleWatcher(),
+
 		Handlers: make(map[reflect.Type]interface{}),
+		messages: make(map[string][]string),
+		mongering: make(map[string]*RumorMessage),
 		addr: address,
 		identifier: identifier,
 		peers: make([]*net.UDPAddr, 0),
 		stop_chan: make(chan int),
+
+		antiEntropy: antiEntropy,
+		routeTimer: routeTimer,
 	}
+
+	g.source = rand.NewSource(time.Now().UnixNano())
+	g.ran = rand.New(g.source)
 
 	err := g.RegisterHandler(&SimpleMessage{})
 
@@ -80,6 +110,8 @@ func NewGossiper(address, identifier string, antiEntropy int, routeTimer int) (B
 // Run implements gossip.BaseGossiper. It starts the listening of UDP datagrams
 // on the given address and starts the antientropy. This is a blocking function.
 func (g *Gossiper) Run(ready chan struct{}) {
+
+	go g.runAntiEntropy()
 
 	udpAddr, err := net.ResolveUDPAddr("udp", g.addr)
 
@@ -130,8 +162,22 @@ func (g *Gossiper) Run(ready chan struct{}) {
 			continue
 		}
 
+		g.inWatcher.Notify(CallbackPacket{Addr: sender.String(), Msg: packet})
+
+		if (packet.Simple != nil) {
+			err = g.ExecuteHandler(packet.Simple, sender)
+		} else if (packet.Rumor != nil) {
+			err = g.ExecuteHandler(packet.Rumor, sender)
+		}else if(packet.Status != nil) {
+			err = g.ExecuteHandler(packet.Status, sender)
+		}else if(packet.Private != nil) {
+			err = g.ExecuteHandler(packet.Private, sender)
+		}else {
+			log.Error("Error parsing message: all fields were nil")
+			continue
+		}
+
 		// Might happen sometimes
-		err = g.ExecuteHandler(packet.Simple, sender)
 		if err != nil {
 			log.Error("Error executing handler:", err)
 			continue
@@ -165,6 +211,54 @@ func (g *Gossiper) Stop() {
 	<- g.stop_chan
 }
 
+func (g *Gossiper) addMessage(id string, msg string) {
+
+	// Todo: should we lock here ?
+	g.messages[id] = append(g.messages[id], msg)
+}
+
+func (g *Gossiper) runAntiEntropy() {
+
+	// Todo: how to stop this on stopMessage ?
+
+	for {
+
+		// Todo factor this in a function
+		time.Sleep(time.Duration(g.antiEntropy) * time.Second)
+		addr := g.randomPeer("")
+		want := make([]PeerStatus, 0)
+		g.map2slice(want)
+		
+		packet := GossipPacket {
+			Status: &StatusPacket {
+				Want: want,
+			},
+		}
+
+		go g.send(packet, addr)
+	}
+}
+
+func (g *Gossiper) getLatest(id string) uint32 {
+
+	// Todo: should we lock here ?
+
+	if val, ok := g.messages[id]; ok {
+		return uint32(len(val))
+	}else {
+		return 0;
+	}
+}
+
+func (g* Gossiper) map2slice(want []PeerStatus) {
+
+	// Todo: lock a mutex here ?
+	for key, value := range g.messages {
+
+		want = append(want, PeerStatus {Identifier: key, NextID: uint32(1 + len(value))})
+	}
+}
+
 func (g *Gossiper) printPeers() {
 
 	g.peers_mux.Lock()
@@ -182,7 +276,51 @@ func (g *Gossiper) printPeers() {
 	fmt.Println()
 }
 
-func (g *Gossiper) broadcast(b []byte, blacklisted string) {
+// returns random peer, or nil of no was found
+func (g *Gossiper) randomPeer(blacklisted string) *net.UDPAddr {
+
+	g.peers_mux.Lock()
+	defer g.peers_mux.Unlock()
+
+	n := len(g.peers)
+	if n == 0 {return nil}
+
+	r := g.ran.Intn(n)
+	if g.peers[r].String() != blacklisted {
+		return g.peers[r]
+	}
+
+	s := (r+1)%n
+	if s == r {return nil}
+
+	// the addAddress function
+	// guarantees that all addresses
+	// are different
+	return g.peers[s]
+
+}
+
+func (g *Gossiper) send(p GossipPacket, to *net.UDPAddr) {
+
+	b, err := json.Marshal(p)
+
+	// Should really never happen
+	if err != nil {
+		panic(fmt.Sprintf("Could not parse JSON: %v", err))
+	}
+
+	g.outWatcher.Notify(CallbackPacket{Addr: to.String(), Msg: p})
+
+	_, err = g.conn.WriteToUDP(b, to)
+
+	// Might happen once a day
+	// The peer may have closed the socket
+	if err != nil {
+		log.Error("Could not write to UDP addr:", err)
+	}
+}
+
+func (g *Gossiper) broadcast(p GossipPacket, blacklisted string) {
 
 	g.peers_mux.Lock()
 	defer g.peers_mux.Unlock()
@@ -190,14 +328,7 @@ func (g *Gossiper) broadcast(b []byte, blacklisted string) {
 	for _, peer := range g.peers {
 
 		if peer.String() == blacklisted {continue}
-
-		_, err := g.conn.WriteToUDP(b, peer)
-
-		// Might happen once a day
-		// The peer may have closed the socket
-		if err != nil {
-			log.Error("Could not write to UDP addr:", err)
-		}
+		g.send(p, peer)
 	}
 }
 
@@ -218,19 +349,32 @@ func (g *Gossiper) AddSimpleMessage(text string) {
 		Simple: &msg,
 	}
 
-	b, err := json.Marshal(packet)
-
-	// Should really never happen
-	if err != nil {
-		panic(fmt.Sprintf("Error marshalling the json: %v", err))
-	}
-
-	go g.broadcast(b, "")
+	go g.broadcast(packet, "")
 }
 
 // AddPrivateMessage sends the message to the next hop.
 func (g *Gossiper) AddPrivateMessage(text, dest, origin string, hoplimit int) {
 	log.Error("Implement me")
+}
+
+func (g *Gossiper) addAddress(addr *net.UDPAddr) {
+
+	// Should really never happen
+	if addr == nil {
+		panic(fmt.Sprintf("Cannot add nil address"))
+	}
+
+	g.peers_mux.Lock()
+	defer g.peers_mux.Unlock()
+
+	for _, peer := range g.peers {
+
+		if peer.String() == addr.String() {
+			return
+		}
+	}
+
+	g.peers = append(g.peers, addr)
 }
 
 // AddAddresses implements gossip.BaseGossiper. It takes any number of node
@@ -245,7 +389,7 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 
 		// Might happen sometimes
 		if err != nil {
-			err = xerrors.Errorf("At least one address couldn't be resolved",)
+			err = xerrors.Errorf("At least one address couldn't be resolved")
 
 			// log because in Exec() we use
 			// AddAddress in a Go routine and
@@ -254,22 +398,14 @@ func (g *Gossiper) AddAddresses(addresses ...string) error {
 			continue
 		}
 
-		g.peers_mux.Lock()
-
-		found := false
-		for _, peer := range g.peers {
-			if peer.String() == udpAddr.String() {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			g.peers = append(g.peers, udpAddr)
-		}
-		g.peers_mux.Unlock()
+		g.addAddress(udpAddr)
 	}
 	return err
+}
+
+func (g* Gossiper) AddMessage(text string) uint32 {
+
+	return 0
 }
 
 // GetNodes implements gossip.BaseGossiper. It returns the list of nodes this
@@ -306,6 +442,10 @@ func (g *Gossiper) SetIdentifier(id string) {
 // identifier for outgoing messages from this gossiper.
 func (g *Gossiper) GetIdentifier() string {
 	return g.identifier
+}
+
+func (g *Gossiper) BroadcastMessage(GossipPacket) {
+
 }
 
 // GetRoutingTable implements gossip.BaseGossiper. It returns the known routes.
