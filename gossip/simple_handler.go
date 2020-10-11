@@ -218,6 +218,12 @@ func (msg *StatusPacket) Exec(g *Gossiper, addr *net.UDPAddr) error {
 				},
 			}
 
+			// Todo: the receiver must
+			// not send back a status
+			// in this case, other wise
+			// sender sends duplicates
+			// (a lot)
+
 			// asynchronous because the Run()
 			// method wants to go back to
 			// listening to new messages
